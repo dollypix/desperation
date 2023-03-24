@@ -1,0 +1,362 @@
+import tkinter as tk
+from tkinter import *
+import pygame
+import random
+
+#creating the main window
+window = tk.Tk()
+window.title('Project Monkey')
+window.geometry("1000x700")
+c = Canvas(window, height=700, width=1000, bg='light pink', bd=0)
+c.pack()
+
+#importing picture
+filename = PhotoImage(file='title_monkey (1).png') #resized - pixelated (fix later)
+image = c.create_image(600, 30, anchor=NE, image=filename)
+
+#title
+msg = c.create_text(765, 250, text='Project Monkey', font=('Arial', 30))
+
+def play():
+    window.destroy()
+    #defining constants for the game - I don't want these to change in the game
+    SCREEN_WIDTH = 947
+    SCREEN_HEIGHT = 738
+    CELL_SIZE = 35
+    MAZE_WIDTH = SCREEN_WIDTH // CELL_SIZE
+    MAZE_HEIGHT = SCREEN_HEIGHT // CELL_SIZE
+    WALL_THICKNESS = 3
+    BG_COLOUR = (255, 255, 255)
+    WALL_COLOUR = (0, 0, 0)
+
+    class Cell:
+        def __init__(self, row, col):
+            self.row = row
+            self.col = col
+            self.visited = False
+            self.walls = {"top": True, "right": True, "bottom": True, "left": True}
+            self.wallRects = []
+            
+        def remove_wall(self, other):
+            if self.row == other.row and self.col == other.col + 1:
+                self.walls["left"] = False
+                other.walls["right"] = False
+            elif self.row == other.row and self.col == other.col - 1:
+                self.walls["right"] = False
+                other.walls["left"] = False
+            elif self.row == other.row + 1 and self.col == other.col:
+                self.walls["top"] = False
+                other.walls["bottom"] = False
+            elif self.row == other.row - 1 and self.col == other.col:
+                self.walls["bottom"] = False
+                other.walls["top"] = False
+
+        def draw(self, surface):
+            x = self.col * CELL_SIZE
+            y = self.row * CELL_SIZE
+
+            if self.walls["top"]:
+                wall_rect = pygame.Rect(x, y, CELL_SIZE, WALL_THICKNESS)
+                pygame.draw.rect(surface, WALL_COLOUR, wall_rect)
+                self.wallRects.append(wall_rect)
+            if self.walls["right"]:
+                wall_rect = pygame.Rect(x + CELL_SIZE - WALL_THICKNESS, y, WALL_THICKNESS, CELL_SIZE)
+                pygame.draw.rect(surface, WALL_COLOUR, wall_rect)
+                self.wallRects.append(wall_rect)
+            if self.walls["bottom"]:
+                wall_rect = pygame.Rect(x, y + CELL_SIZE - WALL_THICKNESS, CELL_SIZE, WALL_THICKNESS)
+                pygame.draw.rect(surface, WALL_COLOUR, wall_rect)
+                self.wallRects.append(wall_rect)
+            if self.walls["left"]:
+                wall_rect = pygame.Rect(x, y, WALL_THICKNESS, CELL_SIZE)
+                pygame.draw.rect(surface, WALL_COLOUR, wall_rect)
+                self.wallRects.append(wall_rect)
+
+    class Quadtree:
+        def __init__(self, x, y, w, h, max_levels=4, max_objects=10):
+            self.x = x
+            self.y = y
+            self.w = w
+            self.h = h
+            self.max_levels = max_levels
+            self.max_objects = max_objects
+            self.objects = []
+            self.nodes = []
+
+        def clear(self):
+            self.objects = []
+            for node in self.nodes:
+                node.clear()
+            self.nodes = []
+
+        def split(self):
+            sub_w = self.w // 2
+            sub_h = self.h // 2
+            x = self.x
+            y = self.y
+            self.nodes.append(Quadtree(x, y, sub_w, sub_h, self.max_levels, self.max_objects))
+            self.nodes.append(Quadtree(x + sub_w, y, sub_w, sub_h, self.max_levels, self.max_objects))
+            self.nodes.append(Quadtree(x, y + sub_h, sub_w, sub_h, self.max_levels, self.max_objects))
+            self.nodes.append(Quadtree(x + sub_w, y + sub_h, sub_w, sub_h, self.max_levels, self.max_objects))
+
+        def get_index(self, rect):
+            index = -1
+            mid_x = self.x + self.w // 2
+            mid_y = self.y + self.h // 2
+
+            top_quadrant = (rect.top < mid_y and rect.bottom < mid_y)
+            bottom_quadrant = (rect.top > mid_y)
+
+            if rect.left < mid_x and rect.right < mid_x:
+                if top_quadrant:
+                    index = 1
+                elif bottom_quadrant:
+                    index = 2
+            elif rect.left > mid_x:
+                if top_quadrant:
+                    index = 0
+                elif bottom_quadrant:
+                    index = 3
+
+            return index
+
+        def insert(self, rect):
+            if self.nodes:
+                index = self.get_index(rect)
+                if index != -1:
+                    self.nodes[index].insert(rect)
+                    return
+
+            self.objects.append(rect)
+
+            if len(self.objects) > self.max_objects and len(self.nodes) < self.max_levels:
+                if not self.nodes:
+                    self.split()
+
+                i = 0
+                while i < len(self.objects):
+                    index = self.get_index(self.objects[i])
+                    if index != -1:
+                        self.nodes[index].insert(self.objects.pop(i))
+                    else:
+                        i += 1
+
+        def retrieve(self, rect):
+            result = []
+            index = self.get_index(rect)
+            if index != -1 and self.nodes:
+                result.extend(self.nodes[index].retrieve(rect))
+
+            result.extend(self.objects)
+
+            return result
+                
+
+           
+    # Define a class for the maze
+    class Maze:
+        def __init__(self):
+            self.grid = []
+            self.stack = []
+            for row in range(MAZE_HEIGHT):
+                self.grid.append([])
+                for col in range(MAZE_WIDTH):
+                    self.grid[row].append(Cell(row, col))
+            self.current_cell = self.grid[0][0]
+            self.current_cell.visited = True
+            self.wallRects = []
+             self.quadtree = QuadTree(0, pygame.Rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT))
+            
+
+        def draw(self, surface):
+            surface.fill(BG_COLOUR)
+            for row in self.grid:
+                for cell in row:
+                    cell.draw(surface)
+                    self.wallRects.extend(cell.wallRects)
+            self.quadtree.draw(surface)        
+            pygame.display.update()
+
+        def get_neighbors(self, cell):
+            neighbors = []
+            if cell.row > 0:
+                top = self.grid[cell.row - 1][cell.col]
+                if not top.visited:
+                    neighbors.append(top)
+            if cell.col < MAZE_WIDTH - 1:
+                right = self.grid[cell.row][cell.col + 1]
+                if not right.visited:
+                    neighbors.append(right)
+            if cell.row < MAZE_HEIGHT - 1:
+                bottom = self.grid[cell.row + 1][cell.col]
+                if not bottom.visited:
+                    neighbors.append(bottom)
+            if cell.col > 0:
+                left = self.grid[cell.row][cell.col - 1]
+                if not left.visited:
+                    neighbors.append(left)
+            return neighbors
+
+        def remove_random_wall(self, cell):
+            unvisited_neighbors = []
+            if cell.row > 0 and not self.grid[cell.row - 1][cell.col].visited:
+                unvisited_neighbors.append(self.grid[cell.row - 1][cell.col])
+            if cell.col < MAZE_WIDTH - 1 and not self.grid[cell.row][cell.col + 1].visited:
+                unvisited_neighbors.append(self.grid[cell.row][cell.col + 1])
+            if cell.row < MAZE_HEIGHT - 1 and not self.grid[cell.row + 1][cell.col].visited:
+                unvisited_neighbors.append(self.grid[cell.row + 1][cell.col])
+            if cell.col > 0 and not self.grid[cell.row][cell.col - 1].visited:
+                unvisited_neighbors.append(self.grid[cell.row][cell.col - 1])
+            if unvisited_neighbors:
+                neighbor = random.choice(unvisited_neighbors)
+                cell.remove_wall(neighbor)
+                self.stack.append(cell)
+                self.current_cell = neighbor
+                neighbor.visited = True
+            elif self.stack:
+                self.current_cell = self.stack.pop()
+
+        def generate(self):
+            while any(not cell.visited for row in self.grid for cell in row):
+                self.remove_random_wall(self.current_cell)
+
+        def reset(self):
+            self.grid = []
+            self.stack = []
+            for row in range(MAZE_HEIGHT):
+                self.grid.append([])
+                for col in range(MAZE_WIDTH):
+                    self.grid[row].append(Cell(row, col))
+            self.current_cell = self.grid[0][0]
+            self.current_cell.visited = True
+            self.quadtree = QuadTree(0, pygame.Rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT))
+
+        def getWallRects(self):
+            return self.wallRects
+
+    
+
+    def main():
+        pygame.init()
+        screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+        pygame.display.set_caption("Maze Game")
+
+        maze = Maze()
+        maze.generate()
+
+        monkeyPlayer = pygame.image.load("monkeysprite2.png")
+
+        monkeyX = 5
+        monkeyY = 6
+
+        monkeyRect = monkeyPlayer.get_rect()
+
+        goal = pygame.image.load("banana.png")
+        goalWidth = 26
+        goalHeight = 24
+        # Calculate the position of the bottom right corner of the screen
+        bx = SCREEN_WIDTH - 6
+        by = SCREEN_HEIGHT - 9
+        goalRect = goal.get_rect(bottomright=(bx, by), width=goalWidth, height=goalHeight)
+
+        clock = pygame.time.Clock()
+
+        victory = False
+
+        FPS = 60
+
+        buffer = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+        
+        while True:
+            dt = clock.tick_busy_loop(FPS) / 1000  # Get time elapsed between frames
+
+            buffer.fill((255, 255, 255))
+
+            maze.draw(buffer)
+
+            speed = 5
+            dx = 0
+            dy = 0
+            wallRects = maze.getWallRects()
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
+                    pygame.quit()
+                    quit()
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_r:
+                            # Reset maze and monkey position
+                            maze.reset()
+                            maze.generate()
+                            monkeyX = 5
+                            monkeyY = 6
+                            monkeyRect.x = 0
+                            monkeyRect.y = 0
+                            victory = False
+
+            keys = pygame.key.get_pressed()
+            if (keys[pygame.K_UP] or keys[pygame.K_w]):
+                dy = -speed
+            elif (keys[pygame.K_DOWN] or keys[pygame.K_s]):
+                dy = speed
+            if (keys[pygame.K_LEFT] or keys[pygame.K_a]):
+                dx = -speed
+            elif (keys[pygame.K_RIGHT] or keys[pygame.K_d]): 
+                dx = speed
+
+            # check for collisions with walls
+            playerRect = pygame.Rect(monkeyX, monkeyY, monkeyRect.width, monkeyRect.height)
+            playerRect.move_ip(dx, dy)
+            for wallRect in wallRects:
+                if playerRect.colliderect(wallRect):
+                    # player collided with wall, reset movement
+                    dx = 0
+                    dy = 0
+                    break
+                
+            monkeyX += dx
+            monkeyY += dy
+
+            monkeyRect.x = monkeyX
+            monkeyRect.y = monkeyY
+
+            #draw the player at its new pos
+            buffer.blit(monkeyPlayer, (monkeyX, monkeyY))
+            buffer.blit(goal, goalRect)
+
+            if monkeyRect.colliderect(goalRect):
+                victory = True
+
+            if victory:
+                buffer.fill((137, 207, 240))
+                font = pygame.font.SysFont('Arial', 36)
+                text = font.render('Well done! Now press R to try a different maze, or exit the game.', True, (255, 255, 255))
+                x = (SCREEN_WIDTH - text.get_width()) // 2
+                y = (SCREEN_HEIGHT - text.get_height()) // 2
+                buffer.blit(text, (x, y))
+                pygame.display.flip()
+                
+            screen.blit(buffer, (0, 0))
+
+            pygame.display.flip()
+
+            pygame.time.wait(int(1000/FPS)) # Wait for fixed time between frames
+
+
+    if __name__ == "__main__":
+        main()
+
+    
+def quit():
+    window.destroy()
+    
+#play button
+play = Button(window, text='Play', font=('Arial', 20), command=play)
+play.pack()
+play.place(x=735, y=300)
+
+#quit button
+quitTitle = Button(window, text='Quit', font=('Arial', 20), command=quit)
+quitTitle.pack()
+quitTitle.place(x=735, y=380)
+
